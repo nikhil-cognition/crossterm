@@ -121,7 +121,18 @@ impl AsFd for FileDesc<'_> {
 
 #[cfg(feature = "libc")]
 /// Creates a file descriptor pointing to the standard input or `/dev/tty`.
+///
+/// If a custom terminal I/O has been set via [`crate::terminal::terminal_io::set_terminal_io`],
+/// this will return a duplicated file descriptor from that source.
 pub fn tty_fd() -> io::Result<FileDesc<'static>> {
+    if let Some(guard) = crate::terminal::terminal_io::try_get_input_fd() {
+        let new_fd = unsafe { libc::dup(guard.raw_fd()) };
+        if new_fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        return Ok(FileDesc::new(new_fd, true));
+    }
+
     let (fd, close_on_drop) = if unsafe { libc::isatty(libc::STDIN_FILENO) == 1 } {
         (libc::STDIN_FILENO, false)
     } else {
@@ -140,8 +151,16 @@ pub fn tty_fd() -> io::Result<FileDesc<'static>> {
 
 #[cfg(not(feature = "libc"))]
 /// Creates a file descriptor pointing to the standard input or `/dev/tty`.
+///
+/// If a custom terminal I/O has been set via [`crate::terminal::terminal_io::set_terminal_io`],
+/// this will return a duplicated file descriptor from that source.
 pub fn tty_fd() -> io::Result<FileDesc<'static>> {
     use std::fs::File;
+
+    if let Some(guard) = crate::terminal::terminal_io::try_get_input_fd() {
+        let new_fd = rustix::io::dup(&*guard)?;
+        return Ok(FileDesc::Owned(new_fd));
+    }
 
     let stdin = rustix::stdio::stdin();
     let fd = if rustix::termios::isatty(stdin) {

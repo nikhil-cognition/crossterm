@@ -1,15 +1,13 @@
 //! UNIX related logic for terminal manipulation.
 
+use std::io::Write;
+
 #[cfg(feature = "events")]
 use crate::event::KeyboardEnhancementFlags;
-use crate::terminal::{
-    sys::file_descriptor::{tty_fd, FileDesc},
-    WindowSize,
-};
+use crate::terminal::{sys::file_descriptor::tty_fd, WindowSize};
 #[cfg(feature = "libc")]
 use libc::{
-    cfmakeraw, ioctl, tcgetattr, tcsetattr, termios as Termios, winsize, STDOUT_FILENO, TCSANOW,
-    TIOCGWINSZ,
+    cfmakeraw, ioctl, tcgetattr, tcsetattr, termios as Termios, winsize, TCSANOW, TIOCGWINSZ,
 };
 use parking_lot::Mutex;
 #[cfg(not(feature = "libc"))]
@@ -18,7 +16,7 @@ use rustix::{
     termios::{Termios, Winsize},
 };
 
-use std::{fs::File, io, process};
+use std::{io, process};
 #[cfg(feature = "libc")]
 use std::{
     mem,
@@ -67,15 +65,8 @@ pub(crate) fn window_size() -> io::Result<WindowSize> {
         ws_ypixel: 0,
     };
 
-    let file = File::open("/dev/tty").map(|file| FileDesc::new(file.into_raw_fd(), true));
-    let fd = if let Ok(file) = &file {
-        file.raw_fd()
-    } else {
-        // Fallback to libc::STDOUT_FILENO if /dev/tty is missing
-        STDOUT_FILENO
-    };
-
-    if wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut size) }).is_ok() {
+    let tty = tty_fd()?;
+    if wrap_with_result(unsafe { ioctl(tty.raw_fd(), TIOCGWINSZ.into(), &mut size) }).is_ok() {
         return Ok(size.into());
     }
 
@@ -84,14 +75,8 @@ pub(crate) fn window_size() -> io::Result<WindowSize> {
 
 #[cfg(not(feature = "libc"))]
 pub(crate) fn window_size() -> io::Result<WindowSize> {
-    let file = File::open("/dev/tty").map(|file| FileDesc::Owned(file.into()));
-    let fd = if let Ok(file) = &file {
-        file.as_fd()
-    } else {
-        // Fallback to libc::STDOUT_FILENO if /dev/tty is missing
-        rustix::stdio::stdout()
-    };
-    let size = rustix::termios::tcgetwinsize(fd)?;
+    let tty = tty_fd()?;
+    let size = rustix::termios::tcgetwinsize(&tty)?;
     Ok(size.into())
 }
 
@@ -216,7 +201,6 @@ fn query_keyboard_enhancement_flags_raw() -> io::Result<Option<KeyboardEnhanceme
         filter::{KeyboardEnhancementFlagsFilter, PrimaryDeviceAttributesFilter},
         internal::{self, InternalEvent},
     };
-    use std::io::Write;
     use std::time::Duration;
 
     // This is the recommended method for testing support for the keyboard enhancement protocol.
@@ -230,15 +214,9 @@ fn query_keyboard_enhancement_flags_raw() -> io::Result<Option<KeyboardEnhanceme
     // ESC [ c          Query primary device attributes.
     const QUERY: &[u8] = b"\x1B[?u\x1B[c";
 
-    let result = File::open("/dev/tty").and_then(|mut file| {
-        file.write_all(QUERY)?;
-        file.flush()
-    });
-    if result.is_err() {
-        let mut stdout = io::stdout();
-        stdout.write_all(QUERY)?;
-        stdout.flush()?;
-    }
+    let mut out = crate::terminal::terminal_io::terminal_output();
+    out.write_all(QUERY)?;
+    out.flush()?;
 
     loop {
         match internal::poll(

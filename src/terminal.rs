@@ -96,6 +96,7 @@ use winapi::um::wincon::ENABLE_WRAP_AT_EOL_OUTPUT;
 use crate::Command;
 use crate::{csi, impl_display};
 
+pub mod terminal_io;
 pub(crate) mod sys;
 
 #[cfg(feature = "events")]

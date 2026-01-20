@@ -34,9 +34,9 @@ fn read_position() -> io::Result<(u16, u16)> {
 
 fn read_position_raw() -> io::Result<(u16, u16)> {
     // Use `ESC [ 6 n` to and retrieve the cursor position.
-    let mut stdout = io::stdout();
-    stdout.write_all(b"\x1B[6n")?;
-    stdout.flush()?;
+    let mut out = crate::terminal::terminal_io::terminal_output();
+    out.write_all(b"\x1B[6n")?;
+    out.flush()?;
 
     loop {
         match internal::poll(Some(Duration::from_millis(2000)), &CursorPositionFilter) {
